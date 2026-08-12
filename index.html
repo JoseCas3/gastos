@@ -493,21 +493,24 @@
   function ym() { return `${view.year}-${pad(view.month + 1)}`; }
   function monthBudget(key) { return data.budgets[key] ?? data.budget; }
 
+  function sanitizeData(p) {
+    if (Array.isArray(p.categories) && typeof p.categories[0] === 'string') {
+      p.categories = p.categories.map(c => ({ name: c, color: CAT_COLORS[c] || '#9AA3AF' }));
+    }
+    (p.expenses || []).forEach(e => { if (!e.type) e.type = 'expense'; });
+    p.version = 3;
+    p.budget = (typeof p.budget === 'number' && !isNaN(p.budget)) ? p.budget : 200;
+    if (!p.budgets || typeof p.budgets !== 'object') p.budgets = {};
+    if (!Array.isArray(p.categories) || !p.categories.length) p.categories = defaultData().categories;
+    p.expenses = Array.isArray(p.expenses) ? p.expenses : [];
+    return p;
+  }
+
   function loadData() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultData();
-      const p = JSON.parse(raw);
-      if (Array.isArray(p.categories) && typeof p.categories[0] === 'string') {
-        p.categories = p.categories.map(c => ({ name: c, color: CAT_COLORS[c] || '#9AA3AF' }));
-      }
-      (p.expenses || []).forEach(e => { if (!e.type) e.type = 'expense'; });
-      p.version = 3;
-      p.budget = (typeof p.budget === 'number' && !isNaN(p.budget)) ? p.budget : 200;
-      if (!p.budgets || typeof p.budgets !== 'object') p.budgets = {};
-      if (!Array.isArray(p.categories) || !p.categories.length) p.categories = defaultData().categories;
-      p.expenses = Array.isArray(p.expenses) ? p.expenses : [];
-      return p;
+      return sanitizeData(JSON.parse(raw));
     } catch (e) {
       return defaultData();
     }
@@ -538,6 +541,33 @@
     a.href = url; a.download = `gastos-${todayStr()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function exportBackup() {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `gastos-backup-${todayStr()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importBackup(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.expenses)) {
+          throw new Error('estructura invalida');
+        }
+        data = sanitizeData(parsed);
+        persist();
+        render();
+      } catch (err) {
+        alert('El archivo no es un backup válido de Gastos.');
+      }
+    };
+    reader.readAsText(file);
   }
 
   function renderCategoryModal() {
@@ -732,8 +762,11 @@
       <section>
         <p class="section-title">Datos</p>
         <div class="export-row">
-          <button id="exportBtn">Exportar CSV</button>
+          <button id="exportBtn">CSV</button>
+          <button id="exportBackupBtn">Backup</button>
+          <button id="importBackupBtn">Restaurar</button>
         </div>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
       </section>
 
       <div class="modal-overlay" id="catModal">
@@ -756,6 +789,14 @@
     document.getElementById('prevM').onclick = () => { view.month--; if (view.month < 0) { view.month = 11; view.year--; } render(); };
     document.getElementById('nextM').onclick = () => { view.month++; if (view.month > 11) { view.month = 0; view.year++; } render(); };
     document.getElementById('exportBtn').onclick = exportCSV;
+    document.getElementById('exportBackupBtn').onclick = exportBackup;
+    document.getElementById('importBackupBtn').onclick = () => document.getElementById('importFile').click();
+    document.getElementById('importFile').onchange = (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      ev.target.value = '';
+      if (confirm('¿Reemplazar todos los datos actuales con este backup?')) importBackup(file);
+    };
 
     const editBudgetBtn = document.getElementById('editBudget');
     if (editBudgetBtn) {
