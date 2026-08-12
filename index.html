@@ -151,6 +151,51 @@
     border: 1px solid var(--line);
     color: var(--muted);
   }
+  .budget-edit-row { display: flex; align-items: center; gap: 8px; }
+  .budget-edit-row .budget-input { flex: 1; max-width: none; }
+  .scope-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .scope-toggle .seg {
+    background: var(--card2);
+    color: var(--muted);
+    border: none;
+    padding: 7px;
+    font-size: 12px;
+    font-family: var(--mono);
+    cursor: pointer;
+  }
+  .scope-toggle .seg.active { background: var(--gold); color: #14181C; }
+  .balance-custom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .custom-badge {
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+  .balance-custom button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+    white-space: nowrap;
+  }
   .tear {
     height: 10px;
     background:
@@ -425,6 +470,7 @@
   let view = { year: new Date().getFullYear(), month: new Date().getMonth(), editingBudget: false };
   let editingId = null;
   let formType = 'expense';
+  let budgetScope = 'month';
 
   function pad(n) { return String(n).padStart(2, '0'); }
   function todayStr() { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
@@ -436,12 +482,16 @@
 
   function defaultData() {
     return {
-      version: 2,
+      version: 3,
       budget: 200,
+      budgets: {},
       categories: DEFAULT_CATS.map(c => ({ name: c, color: CAT_COLORS[c] || '#9AA3AF' })),
       expenses: []
     };
   }
+
+  function ym() { return `${view.year}-${pad(view.month + 1)}`; }
+  function monthBudget(key) { return data.budgets[key] ?? data.budget; }
 
   function loadData() {
     try {
@@ -452,8 +502,9 @@
         p.categories = p.categories.map(c => ({ name: c, color: CAT_COLORS[c] || '#9AA3AF' }));
       }
       (p.expenses || []).forEach(e => { if (!e.type) e.type = 'expense'; });
-      p.version = 2;
+      p.version = 3;
       p.budget = (typeof p.budget === 'number' && !isNaN(p.budget)) ? p.budget : 200;
+      if (!p.budgets || typeof p.budgets !== 'object') p.budgets = {};
       if (!Array.isArray(p.categories) || !p.categories.length) p.categories = defaultData().categories;
       p.expenses = Array.isArray(p.expenses) ? p.expenses : [];
       return p;
@@ -552,10 +603,12 @@
     const monthTx = expensesForView().sort((a, b) => b.date.localeCompare(a.date));
     const totalExpenses = monthTx.filter(e => e.type !== 'income').reduce((s, e) => s + e.amount, 0);
     const totalIncome = monthTx.filter(e => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-    const available = data.budget + totalIncome;
+    const available = monthBudget(ym()) + totalIncome;
     const remaining = available - totalExpenses;
     const pct = available > 0 ? Math.min(100, (totalExpenses / available) * 100) : (totalExpenses > 0 ? 100 : 0);
     const over = remaining < 0;
+    const effBudget = monthBudget(ym());
+    const customBudget = data.budgets[ym()] !== undefined;
 
     const byCategory = {};
     monthTx.forEach(e => { if (e.type !== 'income') byCategory[e.category] = (byCategory[e.category] || 0) + e.amount; });
@@ -580,16 +633,28 @@
         <div class="bar-track"><div class="bar-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
         <div class="balance-sub">
           ${view.editingBudget ? `
-            <input id="budgetInput" class="budget-input" type="number" min="0" step="0.01" value="${data.budget}" inputmode="decimal">
-            <div class="budget-actions">
-              <button id="budgetSave">Guardar</button>
-              <button id="budgetCancel" class="ghost">&times;</button>
+            <div class="budget-edit-row">
+              <input id="budgetInput" class="budget-input" type="number" min="0" step="0.01" value="${effBudget}" inputmode="decimal">
+              <div class="budget-actions">
+                <button id="budgetSave">Guardar</button>
+                <button id="budgetCancel" class="ghost">&times;</button>
+              </div>
+            </div>
+            <div class="scope-toggle">
+              <button type="button" class="seg ${budgetScope === 'month' ? 'active' : ''}" data-scope="month">Solo este mes</button>
+              <button type="button" class="seg ${budgetScope === 'general' ? 'active' : ''}" data-scope="general">General</button>
             </div>
           ` : `
             <span>$${totalExpenses.toFixed(2)} de $${available.toFixed(2)}</span>
             <button id="editBudget">cambiar presupuesto</button>
           `}
         </div>
+        ${!view.editingBudget && customBudget ? `
+          <div class="balance-custom">
+            <span class="custom-badge">Personalizado</span>
+            <button id="resetBudget">usar el general ($${data.budget.toFixed(2)})</button>
+          </div>
+        ` : ''}
       </div>
       <div class="tear"></div>
 
@@ -694,13 +759,25 @@
 
     const editBudgetBtn = document.getElementById('editBudget');
     if (editBudgetBtn) {
-      editBudgetBtn.onclick = () => { view.editingBudget = true; render(); };
+      editBudgetBtn.onclick = () => { budgetScope = 'month'; view.editingBudget = true; render(); };
+    }
+    const resetBudgetBtn = document.getElementById('resetBudget');
+    if (resetBudgetBtn) {
+      resetBudgetBtn.onclick = () => {
+        delete data.budgets[ym()];
+        persist();
+        render();
+      };
     }
     const budgetInput = document.getElementById('budgetInput');
     if (budgetInput) {
       const doSave = () => {
         const val = parseFloat(budgetInput.value);
-        if (!isNaN(val) && val >= 0) { data.budget = val; persist(); }
+        if (!isNaN(val) && val >= 0) {
+          if (budgetScope === 'general') data.budget = val;
+          else data.budgets[ym()] = val;
+          persist();
+        }
         view.editingBudget = false;
         render();
       };
@@ -709,6 +786,13 @@
       budgetInput.onkeydown = (ev) => { if (ev.key === 'Enter') doSave(); if (ev.key === 'Escape') { view.editingBudget = false; render(); } };
       document.getElementById('budgetSave').onclick = doSave;
       document.getElementById('budgetCancel').onclick = () => { view.editingBudget = false; render(); };
+      document.querySelectorAll('.scope-toggle .seg').forEach(btn => {
+        btn.onclick = () => {
+          budgetScope = btn.dataset.scope;
+          document.querySelectorAll('.scope-toggle .seg').forEach(x => x.classList.toggle('active', x.dataset.scope === budgetScope));
+          budgetInput.value = budgetScope === 'general' ? data.budget : monthBudget(ym());
+        };
+      });
     }
 
     document.getElementById('manageCats').onclick = openCategoryModal;
@@ -717,7 +801,7 @@
       if (ev.target.id === 'catModal') closeCategoryModal();
     });
 
-    document.querySelectorAll('.seg').forEach(btn => {
+    document.querySelectorAll('.type-toggle .seg').forEach(btn => {
       btn.onclick = () => {
         formType = btn.dataset.type;
         render();
