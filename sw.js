@@ -1,4 +1,4 @@
-const CACHE = 'gastos-v1';
+const CACHE = 'gastos-v3';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -15,11 +15,27 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request).then((res) => {
-      const clone = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, clone));
-      return res;
-    }).catch(() => cached))
-  );
+  const url = new URL(e.request.url);
+  const isDoc = e.request.mode === 'navigate' || url.pathname.endsWith('/index.html');
+  e.respondWith(isDoc ? networkFirst(e.request) : cacheFirst(e.request));
 });
+
+async function networkFirst(req) {
+  const cache = await caches.open(CACHE);
+  try {
+    const res = await fetch(req);
+    if (res && res.ok) cache.put(req, res.clone());
+    return res;
+  } catch (err) {
+    return (await cache.match(req)) || (await cache.match('./index.html'));
+  }
+}
+
+async function cacheFirst(req) {
+  const cached = await caches.match(req);
+  if (cached) return cached;
+  const res = await fetch(req);
+  const cache = await caches.open(CACHE);
+  cache.put(req, res.clone());
+  return res;
+}
